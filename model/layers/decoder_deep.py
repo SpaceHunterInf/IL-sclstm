@@ -116,7 +116,7 @@ class DecoderDeep(nn.Module):
 		return output, last_hidden, last_cell, last_dt
 
 	
-	def forward(self, input_var, dataset, init_hidden=None, init_feat=None, gen=False, sample_size=1):
+	def forward(self, input_var, dataset, init_hidden=None, init_feat=None, gen=False, sample_size=1, sampling=False, alpha=None):
 		'''
 		Args:
 			input_var: (batch_size, max_len, emb_size)
@@ -142,11 +142,24 @@ class DecoderDeep(nn.Module):
 
 		decoded_words = ['' for k in range(batch_size)]
 		vocab_t = self.get_onehot('SOS_token', dataset, batch_size=batch_size)
+
 		for t in range(max_len):
 			output, last_hidden, last_cell, last_dt = self.rnn_step(vocab_t, last_hidden, last_cell, last_dt, gen=gen)
 
 			self.output_prob[:, t, :] = output
 			previous_out = self.logits2words(output, decoded_words, dataset, sample_size)
+			if gen: #inference
+				vocab_t = previous_out 
+			else: #training
+				if sampling: #scheduled sampling
+					samp_prob = torch.rand(1)
+					if samp_prob.item() <= alpha.item():
+						vocab_t = input_var[:, t, :]
+					else:
+						vocab_t = previous_out
+				else:
+					vocab_t = input_var[:, t, :] 
+				
 			vocab_t = previous_out if gen else input_var[:, t, :] # (batch_size, output_size)
 
 		if gen:

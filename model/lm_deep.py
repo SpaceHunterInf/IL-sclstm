@@ -10,10 +10,13 @@ from model.masked_cross_entropy import *
 USE_CUDA = True
 
 class LM_deep(nn.Module):
-	def __init__(self, dec_type, input_size, output_size, hidden_size, d_size, n_layer=1, dropout=0.5, lr=0.001):
+	def __init__(self, dec_type, input_size, output_size, hidden_size, d_size, n_layer=1, dropout=0.5, lr=0.001, sampling=False, k=100):
 		super(LM_deep, self).__init__()
 		self.dec_type = dec_type
 		self.hidden_size = hidden_size
+		self.sampling = sampling
+		self.b = 0
+		self.k = k
 		print('Using deep version with {} layer'.format(n_layer))
 		print('Using deep version with {} layer'.format(n_layer), file=sys.stderr)
 		self.dec = DecoderDeep(dec_type, input_size, output_size, hidden_size, d_size=d_size, n_layer=n_layer, dropout=dropout)
@@ -23,7 +26,12 @@ class LM_deep(nn.Module):
 		self.set_solver(lr)
 
 	def	forward(self, input_var, dataset, feats_var, gen=False, beam_search=False, beam_size=1):
+		#print(input_var, input_var.shape)
+		#print(feats_var, feats_var.shape)
 		batch_size = dataset.batch_size
+		self.b = (self.b + 1) % batch_size #update_batch
+		alpha = self.k / (self.k + torch.exp(torch.Tensor([self.b / self.k])))
+		#print(alpha)
 		if self.dec_type == 'sclstm':
 			init_hidden = Variable(torch.zeros(batch_size, self.hidden_size))
 			if USE_CUDA:
@@ -44,10 +52,11 @@ class LM_deep(nn.Module):
 			decoded_words = [ [] for _ in range(batch_size) ]
 			for sample_idx in range(sample_size): # over generation
 				self.output_prob, gens = self.dec(input_var, dataset, init_hidden=init_hidden, init_feat=feats_var, \
-													gen=gen, sample_size=sample_size)
+													gen=gen, sample_size=sample_size, sampling=self.sampling, alpha=alpha)
+				#print(self.output_prob, gens)
 				for batch_idx in range(batch_size):
 					decoded_words[batch_idx].append(gens[batch_idx])
-
+			#print(decoded_words)
 			return decoded_words # list (batch_size) of list (sample_size) with generated sentences
 
 

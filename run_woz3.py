@@ -188,6 +188,7 @@ def read(config, args, mode):
 #	lr = config.getfloat('MODEL', 'learning_rate')
 	lr = args.lr
 	beam_size = args.beam_size
+	model_type = args.model_type
 
 	# get feat size
 	d_size = dataset.do_size + dataset.da_size + dataset.sv_size # len of 1-hot feat
@@ -198,7 +199,11 @@ def read(config, args, mode):
 
 	model_path = args.model_path
 #	if model_type == 'lm':
-	model = LM_deep('sclstm', vocab_size, vocab_size, hidden_size, d_size, n_layer=n_layer, dropout=dropout, lr=lr)
+	if model_type == 'vanilla':
+		model = LM_deep('sclstm', vocab_size, vocab_size, hidden_size, d_size, n_layer=n_layer, dropout=dropout, lr=lr)
+	elif model_type == 'sampling':
+		print('sclsmt with scheduled sampling')
+		model = LM_deep('sclstm', vocab_size, vocab_size, hidden_size, d_size, n_layer=n_layer, dropout=dropout, lr=lr, sampling=True)
 #	elif model_type == 'cvae':
 #		model = CVAE(dec_type, hidden_size, vocab_size, latent_size, d_size, do_size, da_size, sv_size, std, n_layer=n_layer, dropout=dropout, lr=0.001, overgen=overgen)
 
@@ -213,6 +218,8 @@ def read(config, args, mode):
 		model.load_state_dict(torch.load(model_path))
 		if mode != 'adapt':
 			model.eval()
+		else:
+			print('Finetuning Model')
 
 	# Print model info
 	print('\n***** MODEL INFO *****')
@@ -256,7 +263,12 @@ def train(config, args):
 			# save model
 			print('Best loss: {:.3f}, AND Save model!'.format(loss))
 			print('Best loss: {:.3f}, AND Save model!'.format(loss), file=sys.stderr)
-			torch.save(model.state_dict(), model_path)
+			if args.mode == 'adapt':
+				save_path = args.save_path
+				torch.save(model.state_dict(), save_path)
+			else:
+				save_path = model_path
+				torch.save(model.state_dict(), save_path)
 			best_loss = loss
 		else:
 			earlyStop += 1
@@ -298,7 +310,7 @@ def parse():
 	parser.add_argument('--data_split', type=str, help='data split file')
 	parser.add_argument('--dec_type', type=str, help='decoder type')
 #	parser.add_argument('--model_type', type=str, help='lm or cvae')
-	parser.add_argument('--model_path', type=str, help='saved model path')
+	parser.add_argument('--model_path', type=str, help='load model path')
 	parser.add_argument('--n_layer', type=int, default=1, help='# of layers in LSTM')
 	parser.add_argument('--percent', type=float, default=1, help='percentage of training data')
 	parser.add_argument('--beam_search', type=str2bool, default=False, help='beam_search')
@@ -306,6 +318,8 @@ def parse():
 	parser.add_argument('--beam_size', type=int, default=1, help='number of generated sentences')
 	parser.add_argument('--bs', type=int, default=256, help='batch size')
 	parser.add_argument('--lr', type=float, default=0.0025, help='learning rate')
+	parser.add_argument('--save_path', type=str, help='save model path')
+	parser.add_argument('--model_type', type=str, default='vanilla', help='choose whether to use sampling')
 	args = parser.parse_args()
 
 	config = configparser.ConfigParser()
