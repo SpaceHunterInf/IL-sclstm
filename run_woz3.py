@@ -86,7 +86,7 @@ def get_slot_error(dataset, gens, refs, sv_indexes):
 	return count, countPerGen
 		
 
-def evaluate(config, dataset, model, data_type, beam_search, beam_size, batch_size):
+def evaluate(config, dataset, model, data_type, beam_search, beam_size, batch_size, in_context=False):
 	t = time.time()
 	model.eval()
 #	batch_size = config.getint('DATA', 'batch_size')
@@ -94,11 +94,19 @@ def evaluate(config, dataset, model, data_type, beam_search, beam_size, batch_si
 	total_loss = 0
 	countAll = {'total': 0.0, 'redunt': 0.0, 'miss': 0.0}
 	for i in range(dataset.n_batch[data_type]):
-		input_var, label_var, feats_var, lengths, refs, featStrs, sv_indexes = dataset.next_batch(data_type=data_type)
+		if in_context:
+			data_and_context = dataset.next_batch(data_type=data_type)
+			input_var, label_var, feats_var, lengths, refs, featStrs, sv_indexes = data_and_context['data']
+			context_var, _, context_feat, _, _, _, _ = data_and_context['in_context']
+		else:
+			input_var, label_var, feats_var, lengths, refs, featStrs, sv_indexes = dataset.next_batch(data_type=data_type)
 
 		if data_type == 'valid':
 			# feed-forward w/i ground truth as input
-			decoded_words = model(input_var, dataset, feats_var, gen=False, beam_search=False, beam_size=1)
+			if in_context:
+				decoded_words = model(input_var, dataset, feats_var, gen=False, beam_search=False, beam_size=1, context_var=context_var, context_feat=context_feat)
+			else:
+				decoded_words = model(input_var, dataset, feats_var, gen=False, beam_search=False, beam_size=1)
 #			_, _ = get_slot_error(dataset, decoded_words, refs, sv_indexes)
 
 			# update loss
@@ -111,7 +119,10 @@ def evaluate(config, dataset, model, data_type, beam_search, beam_size, batch_si
 
 		else: # test
 			print('decode batch {} out of {}'.format(i, dataset.n_batch[data_type]), file=sys.stderr)
-			decoded_words = model(input_var, dataset, feats_var, gen=True, beam_search=beam_search, beam_size=beam_size)
+			if in_context:
+				decoded_words = model(input_var, dataset, feats_var, gen=True, beam_search=beam_search, beam_size=beam_size, context_var=context_var, context_feat=context_feat)
+			else:
+				decoded_words = model(input_var, dataset, feats_var, gen=True, beam_search=beam_search, beam_size=beam_size)
 			countBatch, countPerGen = get_slot_error(dataset, decoded_words, refs, sv_indexes)
 	
 			# print generation results
@@ -138,16 +149,24 @@ def evaluate(config, dataset, model, data_type, beam_search, beam_size, batch_si
 	return total_loss
 
 
-def train_epoch(config, dataset, model):
+def train_epoch(config, dataset, model, in_context=False):
 	t = time.time()
 	model.train()
 
 	total_loss = 0
 	for i in range(dataset.n_batch['train']):
-		input_var, label_var, feats_var, lengths, refs, featStrs, sv_indexes = dataset.next_batch()
+		if in_context:
+			data_and_context = dataset.next_batch()
+			input_var, label_var, feats_var, lengths, refs, featStrs, sv_indexes = data_and_context['data']
+			context_var, _, context_feat, _, _, _, _ = data_and_context['in_context']
+		else:
+			input_var, label_var, feats_var, lengths, refs, featStrs, sv_indexes = dataset.next_batch()
 
 		# feedforward and calculate loss
-		_ = model(input_var, dataset, feats_var)
+		if in_context:
+			_ = model(input_var, dataset, feats_var, context_var=context_var, context_feat = context_feat)
+		else:
+			_ = model(input_var, dataset, feats_var)
 		loss = model.get_loss(label_var, lengths)
 
 		# update loss
@@ -174,7 +193,7 @@ def read(config, args, mode):
 		bs = 1
 
 	percentage = args.percent
-	dataset = DatasetWoz3(config, args.data_split, percentage=percentage)
+	dataset = DatasetWoz3(config, args.data_split, percentage=percentage, in_context=args.in_context)
 
 	# get model hyper-parameters
 	# TODO: support vanilla lstm and vae
@@ -254,9 +273,9 @@ def train(config, args):
 		dataset.reset()
 		print('Epoch', epoch, '(n_layer {})'.format(n_layer))
 		print('Epoch', epoch, '(n_layer {})'.format(n_layer), file=sys.stderr)
-		train_epoch(config, dataset, model)
+		train_epoch(config, dataset, model, in_context=args.in_context)
 
-		loss = evaluate(config, dataset, model, 'valid', False, 1, dataset.batch_size)
+		loss = evaluate(config, dataset, model, 'valid', False, 1, dataset.batch_size, args.in_context)
 
 		if loss < best_loss:
 			earlyStop = 0
@@ -291,7 +310,7 @@ def test(config, args):
 	print('TEST ON: {}'.format(data_type), file=sys.stderr)
 
 	# Evaluate model
-	loss = evaluate(config, dataset, model, 'test', beam_search, beam_size, dataset.batch_size)
+	loss = evaluate(config, dataset, model, 'test', beam_search, beam_size, dataset.batch_size, args.in_context)
 
 
 def str2bool(v):
@@ -320,6 +339,7 @@ def parse():
 	parser.add_argument('--lr', type=float, default=0.0025, help='learning rate')
 	parser.add_argument('--save_path', type=str, help='save model path')
 	parser.add_argument('--model_type', type=str, default='vanilla', help='choose whether to use sampling')
+	parser.add_argument('--in_context', type=bool, default='False', help='Enable In-Context Training')
 	args = parser.parse_args()
 
 	config = configparser.ConfigParser()

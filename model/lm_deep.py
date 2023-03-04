@@ -6,34 +6,42 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 
 from model.layers.decoder_deep import DecoderDeep
+from model.layers.encoder_deep import EncoderDeep
 from model.masked_cross_entropy import *
 USE_CUDA = True
 
 class LM_deep(nn.Module):
-	def __init__(self, dec_type, input_size, output_size, hidden_size, d_size, n_layer=1, dropout=0.5, lr=0.001, sampling=False, k=100):
+	def __init__(self, dec_type, input_size, output_size, hidden_size, d_size, n_layer=1, dropout=0.5, lr=0.001, sampling=False, in_context=False, k=6000):
 		super(LM_deep, self).__init__()
 		self.dec_type = dec_type
 		self.hidden_size = hidden_size
 		self.sampling = sampling
 		self.b = 0
 		self.k = k
+		self.in_context = in_context
 		print('Using deep version with {} layer'.format(n_layer))
 		print('Using deep version with {} layer'.format(n_layer), file=sys.stderr)
+		if self.in_context:
+			self.enc = EncoderDeep(dec_type, input_size, output_size, hidden_size, d_size=d_size, n_layer=n_layer, dropout=dropout)
 		self.dec = DecoderDeep(dec_type, input_size, output_size, hidden_size, d_size=d_size, n_layer=n_layer, dropout=dropout)
 #		if self.dec_type != 'sclstm':
 #			self.feat2hidden = nn.Linear(d_size, hidden_size)
 
 		self.set_solver(lr)
 
-	def	forward(self, input_var, dataset, feats_var, gen=False, beam_search=False, beam_size=1):
+	def	forward(self, input_var, dataset, feats_var, gen=False, beam_search=False, beam_size=1, context_var=None, context_feat=None):
 		#print(input_var, input_var.shape)
 		#print(feats_var, feats_var.shape)
 		batch_size = dataset.batch_size
-		self.b = (self.b + 1) % batch_size #update_batch
+		self.b = (self.b + 1) #% batch_size #update_batch
 		alpha = self.k / (self.k + torch.exp(torch.Tensor([self.b / self.k])))
 		#print(alpha)
 		if self.dec_type == 'sclstm':
-			init_hidden = Variable(torch.zeros(batch_size, self.hidden_size))
+			if self.in_context: #encode demonstration sample
+				enc_init_indden = Variable(torch.zeros(batch_size, self.hidden_size))
+				init_hidden = self.enc(context_var, dataset, init_hidden=enc_init_indden, init_feat=context_feat)
+			else:
+				init_hidden = Variable(torch.zeros(batch_size, self.hidden_size))
 			if USE_CUDA:
 				init_hidden = init_hidden.cuda()
 			'''
